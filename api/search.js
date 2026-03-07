@@ -6,25 +6,38 @@ export default async function handler(req, res) {
   const { query } = req.body;
   if (!query) return res.status(400).json({ error: "Missing query" });
 
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not set", detail: "Environment variable missing" });
+  }
+
+  let response;
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1200,
         tools: [{ type: "web_search_20250305", name: "web_search" }],
-        system: `You find summer camp/program info. Return ONLY a JSON array, no markdown, no preamble.
-Schema per item: {"name":"","organization":"","description":"","category":"Arts & Music|Sports|STEM|Outdoors|Academic|Other","price":"","registration_deadline":"YYYY-MM-DD or null","start_date":"YYYY-MM-DD or null","end_date":"YYYY-MM-DD or null","dropoff_time":"","pickup_time":"","age_min":null,"age_max":null,"requirements":"","website":"","location":""}
-Return 3–5 results max.`,
-        messages: [{ role: "user", content: `Find summer camps/programs: ${query}` }],
+        system: "You find summer camp/program info. Return ONLY a JSON array, no markdown, no preamble. Schema per item: {\"name\":\"\",\"organization\":\"\",\"description\":\"\",\"category\":\"Arts & Music|Sports|STEM|Outdoors|Academic|Other\",\"price\":\"\",\"registration_deadline\":\"YYYY-MM-DD or null\",\"start_date\":\"YYYY-MM-DD or null\",\"end_date\":\"YYYY-MM-DD or null\",\"dropoff_time\":\"\",\"pickup_time\":\"\",\"age_min\":null,\"age_max\":null,\"requirements\":\"\",\"website\":\"\",\"location\":\"\"} Return 3-5 results max.",
+        messages: [{ role: "user", content: "Find summer camps/programs: " + query }],
       }),
     });
+  } catch (err) {
+    return res.status(500).json({ error: "Fetch to Anthropic failed", detail: err.message });
+  }
 
+  if (!response.ok) {
+    const errBody = await response.text();
+    return res.status(500).json({ error: "Anthropic API error", status: response.status, detail: errBody });
+  }
+
+  try {
     const data = await response.json();
     const text = data.content.map(b => b.type === "text" ? b.text : "").join("");
     const clean = text.replace(/```json|```/g, "").trim();
@@ -33,7 +46,6 @@ Return 3–5 results max.`,
     const results = JSON.parse(clean.slice(s, e + 1));
     return res.status(200).json(results);
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Search failed" });
+    return res.status(500).json({ error: "Failed to parse response", detail: err.message });
   }
 }
