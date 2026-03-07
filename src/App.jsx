@@ -68,8 +68,8 @@ const DB = {
   },
   async upsertChild(c) {
     if (DEMO) { const d = lsGet(); const a = d.children || []; const i = a.findIndex(x => x.id === c.id); const n = { ...c, id: c.id || uid(), created_at: new Date().toISOString() }; if (i >= 0) a[i] = n; else a.push(n); d.children = a; lsSet(d); return n; }
-    if (c.id) return sb.update("children", c.id, { name: c.name, age: c.age });
-    return sb.insert("children", { family_id: c.family_id, name: c.name, age: c.age });
+    if (c.id) return sb.update("children", c.id, { name: c.name, age: c.age, gender: c.gender || null });
+    return sb.insert("children", { family_id: c.family_id, name: c.name, age: c.age, gender: c.gender || null });
   },
   async deleteChild(id) {
     if (DEMO) { const d = lsGet(); d.children = (d.children || []).filter(c => c.id !== id); lsSet(d); return; }
@@ -122,6 +122,10 @@ const DB = {
   async deleteBulletin(id) {
     if (DEMO) { const d = lsGet(); d.bulletin = (d.bulletin || []).filter(b => b.id !== id); lsSet(d); return; }
     await sb.del("bulletin_items", id);
+  },
+  async getAllChildPrograms() {
+    if (DEMO) return lsGet().child_programs || [];
+    return sb.q("child_programs", { select: "program_id" });
   },
 };
 
@@ -327,6 +331,13 @@ function Welcome({ onLogin }) {
   );
 }
 
+const kidEmoji = k => {
+  const g = k.gender || "";
+  if (g === "Girl") return parseInt(k.age) >= 13 ? "👩" : "👧";
+  if (g === "Boy") return parseInt(k.age) >= 13 ? "👨" : "👦";
+  return parseInt(k.age) >= 13 ? "🧑" : "🧒";
+};
+
 function KidsTab({ family, kids, onRefresh }) {
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -344,7 +355,7 @@ function KidsTab({ family, kids, onRefresh }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
         <h2 style={{ fontFamily: FD, fontSize: 24, color: T.pine }}>Our Children</h2>
-        <Btn ch={<><Ico n="plus" size={13} color="white" />Add Child</>} sz="sm" onClick={() => setEditing({ name: "", age: "" })} />
+        <Btn ch={<><Ico n="plus" size={13} color="white" />Add Child</>} sz="sm" onClick={() => setEditing({ name: "", age: "", gender: "" })} />
       </div>
       {!kids.length && !editing && (
         <div style={{ textAlign: "center", padding: "56px 20px", color: T.muted }}>
@@ -357,14 +368,14 @@ function KidsTab({ family, kids, onRefresh }) {
           <Card key={k.id} ch={
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 44, height: 44, borderRadius: 13, background: T.sky + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
-                {k.age && parseInt(k.age) <= 10 ? "🧒" : "👦"}
+                {kidEmoji(k)}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 16 }}>{k.name}</div>
-                {k.age && <div style={{ fontSize: 13, color: T.muted }}>Age {k.age}</div>}
+                {k.age && <div style={{ fontSize: 13, color: T.muted }}>Age {k.age}{k.gender ? ` · ${k.gender}` : ""}</div>}
               </div>
               <div style={{ display: "flex", gap: 7 }}>
-                <Btn ch={<><Ico n="edit" size={13} />Edit</>} sz="sm" v="secondary" onClick={() => setEditing({ id: k.id, name: k.name, age: k.age || "" })} />
+                <Btn ch={<><Ico n="edit" size={13} />Edit</>} sz="sm" v="secondary" onClick={() => setEditing({ id: k.id, name: k.name, age: k.age || "", gender: k.gender || "" })} />
                 <Btn ch={<Ico n="trash" size={13} />} sz="sm" v="ghost" onClick={() => del(k.id)} />
               </div>
             </div>
@@ -377,7 +388,10 @@ function KidsTab({ family, kids, onRefresh }) {
             <h3 style={{ fontFamily: FD, fontSize: 21, marginBottom: 20 }}>{editing.id ? "Edit Child" : "Add Child"}</h3>
             <div style={{ display: "grid", gap: 14 }}>
               <Field label="Name" required value={editing.name} onChange={v => setEditing(e => ({ ...e, name: v }))} placeholder="e.g. Emma" />
-              <Field label="Age" type="number" value={editing.age} onChange={v => setEditing(e => ({ ...e, age: v }))} placeholder="e.g. 10" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Field label="Age" type="number" value={editing.age} onChange={v => setEditing(e => ({ ...e, age: v }))} placeholder="e.g. 10" />
+                <Field label="Gender" opts={["", "Boy", "Girl", "Non-binary"]} value={editing.gender || ""} onChange={v => setEditing(e => ({ ...e, gender: v }))} />
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
               <Btn ch="Cancel" v="secondary" onClick={() => setEditing(null)} sx={{ flex: 1, justifyContent: "center" }} />
@@ -488,21 +502,38 @@ function ProgDetail({ prog: init, family, username, kids, childProgs, onClose, o
   );
 }
 
-function AddProg({ family, username, onClose, onAdd }) {
+function AddProg({ family, username, onClose, onAdd, onAddMany }) {
   const [mode, setMode] = useState("search");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState([]);
   const [searchErr, setSearchErr] = useState("");
+  const [selected, setSelected] = useState(new Set());
   const blank = { name: "", organization: "", description: "", category: "Other", price: "", registration_deadline: "", start_date: "", end_date: "", dropoff_time: "", pickup_time: "", age_min: "", age_max: "", requirements: "", website: "", location: "" };
   const [form, setForm] = useState(blank);
   const fv = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   async function doSearch() {
     if (!query.trim()) return;
-    setBusy(true); setResults([]); setSearchErr("");
+    setBusy(true); setResults([]); setSearchErr(""); setSelected(new Set());
     try { setResults(await aiSearch(query)); }
     catch { setSearchErr("Search failed — try manual entry."); }
+    setBusy(false);
+  }
+
+  function toggleSelect(i) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  }
+
+  async function importSelected() {
+    if (selected.size === 0) return;
+    setBusy(true);
+    const items = [...selected].map(i => results[i]).filter(Boolean);
+    await onAddMany(items.map(r => ({ ...blank, ...r, age_min: r.age_min || "", age_max: r.age_max || "", added_by: username, added_by_family_id: family.id, likes: [], carpool_dropoff: [], carpool_pickup: [] })));
     setBusy(false);
   }
 
@@ -535,26 +566,46 @@ function AddProg({ family, username, onClose, onAdd }) {
               <Btn ch={busy ? <><Spin />Searching…</> : <><Ico n="search" size={14} color="white" />Search</>} onClick={doSearch} disabled={busy} />
             </div>
             {searchErr && <p style={{ color: T.coral, fontSize: 13, marginBottom: 12 }}>{searchErr}</p>}
+            {results.length > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <button onClick={() => setSelected(selected.size === results.length ? new Set() : new Set(results.map((_, i) => i)))}
+                  style={{ background: "none", border: "none", color: T.sky, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+                  {selected.size === results.length ? "Deselect All" : "Select All"}
+                </button>
+                {selected.size > 0 && (
+                  <Btn ch={busy ? <><Spin />Importing…</> : <><Ico n="dl" size={13} color="white" />Import {selected.size} Selected</>}
+                    v="sky" sz="sm" onClick={importSelected} disabled={busy} />
+                )}
+              </div>
+            )}
             <div style={{ display: "grid", gap: 12 }}>
-              {results.map((r, i) => (
-                <Card key={i} ch={
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
-                    <div style={{ flex: 1 }}>
-                      <Bdg label={r.category} color={CATS[r.category] || T.muted} />
-                      <h4 style={{ fontFamily: FD, fontSize: 16, marginTop: 7, marginBottom: 2 }}>{r.name}</h4>
-                      <p style={{ fontSize: 13, color: T.muted }}>{r.organization}{r.location ? ` · ${r.location}` : ""}</p>
-                      <p style={{ fontSize: 13, marginTop: 6, lineHeight: 1.55, color: T.dark }}>{r.description?.slice(0, 110)}{r.description?.length > 110 ? "…" : ""}</p>
-                      <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, flexWrap: "wrap", color: T.muted }}>
-                        {r.price && <span>💰 {r.price}</span>}
-                        {r.start_date && <span>📅 {fmtD(r.start_date)}</span>}
-                        {r.registration_deadline && <span>⏰ {fmtD(r.registration_deadline)}</span>}
+              {results.map((r, i) => {
+                const sel = selected.has(i);
+                return (
+                  <div key={i} onClick={() => toggleSelect(i)} style={{ cursor: "pointer" }}>
+                    <Card sx={{ border: `2px solid ${sel ? T.sky : T.fog}`, background: sel ? T.sky + "08" : "white", transition: "all .15s" }} ch={
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${sel ? T.sky : T.fog}`, background: sel ? T.sky : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}>
+                          {sel && <Ico n="check" size={12} color="white" />}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <Bdg label={r.category} color={CATS[r.category] || T.muted} />
+                          <h4 style={{ fontFamily: FD, fontSize: 16, marginTop: 7, marginBottom: 2 }}>{r.name}</h4>
+                          <p style={{ fontSize: 13, color: T.muted }}>{r.organization}{r.location ? ` · ${r.location}` : ""}</p>
+                          <p style={{ fontSize: 13, marginTop: 6, lineHeight: 1.55, color: T.dark }}>{r.description?.slice(0, 110)}{r.description?.length > 110 ? "…" : ""}</p>
+                          <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, flexWrap: "wrap", color: T.muted }}>
+                            {r.price && <span>💰 {r.price}</span>}
+                            {r.start_date && <span>📅 {fmtD(r.start_date)}</span>}
+                            {r.registration_deadline && <span>⏰ {fmtD(r.registration_deadline)}</span>}
+                          </div>
+                        </div>
+                        <Btn ch={<><Ico n="dl" size={13} color="white" />Import</>} sz="sm" v="sky"
+                          onClick={e => { e.stopPropagation(); setForm({ ...blank, ...r, age_min: r.age_min || "", age_max: r.age_max || "" }); setMode("manual"); }} />
                       </div>
-                    </div>
-                    <Btn ch={<><Ico n="dl" size={13} color="white" />Import</>} sz="sm" v="sky"
-                      onClick={() => { setForm({ ...blank, ...r, age_min: r.age_min || "", age_max: r.age_max || "" }); setMode("manual"); }} />
+                    } />
                   </div>
-                } />
-              ))}
+                );
+              })}
               {!results.length && !busy && query && !searchErr && (
                 <p style={{ color: T.muted, textAlign: "center", padding: "24px 0", fontSize: 14 }}>No results. Try different keywords or switch to Manual Entry.</p>
               )}
@@ -755,7 +806,7 @@ function ProgsTab({ progs, family, username, kids, childProgs, onLike, onDelete,
   );
 }
 
-function CalTab({ progs, onOpen }) {
+function CalTab({ progs, onOpen, allChildProgs }) {
   const [off, setOff] = useState(0);
   const now = new Date();
   const base = new Date(now.getFullYear(), now.getMonth() + off, 1);
@@ -770,6 +821,7 @@ function CalTab({ progs, onOpen }) {
       return date >= s && date <= e;
     });
   };
+  const enrolledCount = pid => (allChildProgs || []).filter(cp => cp.program_id === pid).length;
   const cells = [...Array(fd).fill(null), ...Array.from({ length: dim }, (_, i) => i + 1)];
   return (
     <div>
@@ -781,30 +833,36 @@ function CalTab({ progs, onOpen }) {
           <Btn ch="Next →" v="secondary" sz="sm" onClick={() => setOff(o => o + 1)} />
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3, marginBottom: 5 }}>
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
-          <div key={d} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: T.muted, padding: "5px 0" }}>{d}</div>
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 }}>
-        {cells.map((day, i) => {
-          const dp = day ? progsOn(day) : [];
-          const isT = day && new Date(y, m, day).toDateString() === now.toDateString();
-          return (
-            <div key={i} style={{ minHeight: 74, background: day ? "white" : "transparent", border: day ? `1px solid ${isT ? T.pine : T.fog}` : "none", borderRadius: 9, padding: 5, boxShadow: isT ? `0 0 0 2px ${T.pine}` : "none" }}>
-              {day && <>
-                <div style={{ fontSize: 12, fontWeight: isT ? 800 : 400, color: isT ? T.pine : T.dark, marginBottom: 2 }}>{day}</div>
-                {dp.slice(0, 3).map(p => (
-                  <div key={p.id} onClick={() => onOpen(p)}
-                    style={{ fontSize: 10, padding: "2px 5px", borderRadius: 3, marginBottom: 2, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: (CATS[p.category] || T.muted) + "28", color: CATS[p.category] || T.muted, fontWeight: 700 }}>
-                    {p.name}
-                  </div>
-                ))}
-                {dp.length > 3 && <div style={{ fontSize: 10, color: T.muted }}>+{dp.length - 3}</div>}
-              </>}
-            </div>
-          );
-        })}
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3, marginBottom: 5, minWidth: 280 }}>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
+            <div key={d} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: T.muted, padding: "5px 0" }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3, minWidth: 280 }}>
+          {cells.map((day, i) => {
+            const dp = day ? progsOn(day) : [];
+            const isT = day && new Date(y, m, day).toDateString() === now.toDateString();
+            return (
+              <div key={i} style={{ minHeight: 74, background: day ? "white" : "transparent", border: day ? `1px solid ${isT ? T.pine : T.fog}` : "none", borderRadius: 9, padding: 5, boxShadow: isT ? `0 0 0 2px ${T.pine}` : "none", minWidth: 0 }}>
+                {day && <>
+                  <div style={{ fontSize: 12, fontWeight: isT ? 800 : 400, color: isT ? T.pine : T.dark, marginBottom: 2 }}>{day}</div>
+                  {dp.slice(0, 3).map(p => {
+                    const cnt = enrolledCount(p.id);
+                    return (
+                      <div key={p.id} onClick={() => onOpen(p)}
+                        style={{ fontSize: 10, padding: "2px 4px", borderRadius: 3, marginBottom: 2, cursor: "pointer", background: (CATS[p.category] || T.muted) + "28", color: CATS[p.category] || T.muted, fontWeight: 700 }}>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                        {cnt > 0 && <div style={{ fontSize: 9, opacity: 0.85, whiteSpace: "nowrap" }}>👦 {cnt} kid{cnt !== 1 ? "s" : ""}</div>}
+                      </div>
+                    );
+                  })}
+                  {dp.length > 3 && <div style={{ fontSize: 10, color: T.muted }}>+{dp.length - 3}</div>}
+                </>}
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 10 }}>
         {Object.entries(CATS).map(([cat, color]) => (
@@ -932,6 +990,7 @@ export default function App() {
   const [progs, setProgs] = useState([]);
   const [kids, setKids] = useState([]);
   const [cps, setCps] = useState([]);
+  const [allCps, setAllCps] = useState([]);
   const [chat, setChat] = useState([]);
   const [bull, setBull] = useState([]);
   const [tab, setTab] = useState("programs");
@@ -945,11 +1004,12 @@ export default function App() {
   async function loadAll() {
     if (!fam) return;
     setLoading(true);
-    const [p, c, b, k, cp] = await Promise.all([
+    const [p, c, b, k, cp, acp] = await Promise.all([
       DB.getPrograms(), DB.getChat(), DB.getBulletin(),
       DB.getChildren(fam.id), DB.getChildPrograms(fam.id),
+      DB.getAllChildPrograms(),
     ]);
-    setProgs(p); setChat(c); setBull(b); setKids(k); setCps(cp);
+    setProgs(p); setChat(c); setBull(b); setKids(k); setCps(cp); setAllCps(acp);
     setLoading(false);
   }
   useEffect(() => { loadAll(); }, [fam?.id]);
@@ -959,6 +1019,15 @@ export default function App() {
     setProgs(prev => [np, ...prev]);
     const b = await DB.addBulletin({ message: `${username} added "${p.name}" 🏕️`, type: "new_program", author: username, family_id: fam.id });
     setBull(prev => [b, ...prev]);
+    setShowAdd(false);
+  }
+  async function addManyProgs(ps) {
+    for (const p of ps) {
+      const np = await DB.addProgram(p);
+      setProgs(prev => [np, ...prev]);
+      const b = await DB.addBulletin({ message: `${username} added "${p.name}" 🏕️`, type: "new_program", author: username, family_id: fam.id });
+      setBull(prev => [b, ...prev]);
+    }
     setShowAdd(false);
   }
   async function likeProg(p) {
@@ -1053,7 +1122,7 @@ export default function App() {
         ) : (
           <>
             {tab === "programs" && <ProgsTab progs={progs} family={fam} username={username} kids={kids} childProgs={cps} onLike={likeProg} onDelete={delProg} onOpen={setDetail} onAdd={() => setShowAdd(true)} onEdit={setEditing} />}
-            {tab === "calendar" && <CalTab progs={progs} onOpen={setDetail} />}
+            {tab === "calendar" && <CalTab progs={progs} onOpen={setDetail} allChildProgs={allCps} />}
             {tab === "ranked" && <RankedTab progs={progs} onOpen={setDetail} />}
             {tab === "bulletin" && <BulletinTab items={bull} family={fam} username={username} onDelete={delBull} />}
             {tab === "chat" && <ChatTab msgs={chat} username={username} onSend={sendChat} />}
@@ -1068,7 +1137,7 @@ export default function App() {
           <Ico n="plus" size={24} color="white" />
         </button>
       )}
-      {showAdd && <AddProg family={fam} username={username} onClose={() => setShowAdd(false)} onAdd={addProg} />}
+      {showAdd && <AddProg family={fam} username={username} onClose={() => setShowAdd(false)} onAdd={addProg} onAddMany={addManyProgs} />}
       {detail && <ProgDetail prog={detail} family={fam} username={username} kids={kids} childProgs={cps} onClose={() => setDetail(null)} onSave={saveProg} onAssign={assignKid} onEdit={p => { setDetail(null); setEditing(p); }} />}
       {editing && <EditProg prog={editing} onClose={() => setEditing(null)} onSave={editProgFn} />}
     </div>
