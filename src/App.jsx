@@ -390,7 +390,7 @@ function KidsTab({ family, kids, onRefresh }) {
   );
 }
 
-function ProgDetail({ prog: init, family, username, kids, childProgs, onClose, onSave, onAssign }) {
+function ProgDetail({ prog: init, family, username, kids, childProgs, onClose, onSave, onAssign, onEdit }) {
   const [prog, setProg] = useState(init);
   const [ci, setCi] = useState({ d: "", p: "" });
   useEffect(() => setProg(init), [init]);
@@ -411,9 +411,14 @@ function ProgDetail({ prog: init, family, username, kids, childProgs, onClose, o
   return (
     <Overlay onClose={onClose} maxW={700} ch={
       <div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <Bdg label={prog.category} color={cc} />
-          {prog.age_min && <Bdg label={`Ages ${prog.age_min}–${prog.age_max || "+"}`} color={T.sky} />}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Bdg label={prog.category} color={cc} />
+            {prog.age_min && <Bdg label={`Ages ${prog.age_min}–${prog.age_max || "+"}`} color={T.sky} />}
+          </div>
+          {prog.added_by_family_id === family.id && (
+            <Btn ch={<><Ico n="edit" size={13} color="white" />Edit</>} sz="sm" v="sky" onClick={() => onEdit(prog)} />
+          )}
         </div>
         <h2 style={{ fontFamily: FD, fontSize: 27, marginBottom: 5, lineHeight: 1.2 }}>{prog.name}</h2>
         <p style={{ color: T.muted, marginBottom: 16 }}>{prog.organization}{prog.location ? ` · ${prog.location}` : ""}</p>
@@ -591,7 +596,52 @@ function AddProg({ family, username, onClose, onAdd }) {
   );
 }
 
-function ProgsTab({ progs, family, username, kids, childProgs, onLike, onDelete, onOpen, onAdd }) {
+function EditProg({ prog, onClose, onSave }) {
+  const init = { name: prog.name || "", organization: prog.organization || "", description: prog.description || "", category: prog.category || "Other", price: prog.price || "", registration_deadline: prog.registration_deadline || "", start_date: prog.start_date || "", end_date: prog.end_date || "", dropoff_time: prog.dropoff_time || "", pickup_time: prog.pickup_time || "", age_min: prog.age_min || "", age_max: prog.age_max || "", requirements: prog.requirements || "", website: prog.website || "", location: prog.location || "" };
+  const [form, setForm] = useState(init);
+  const fv = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  async function submit() {
+    if (!form.name.trim()) return;
+    await onSave({ ...prog, ...form });
+  }
+  return (
+    <Overlay onClose={onClose} maxW={700} ch={
+      <div>
+        <h2 style={{ fontFamily: FD, fontSize: 25, marginBottom: 20 }}>Edit Program</h2>
+        <div style={{ display: "grid", gap: 13 }}>
+          <Field label="Program Name" required value={form.name} onChange={v => fv("name", v)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Organization" value={form.organization} onChange={v => fv("organization", v)} />
+            <Field label="Location" value={form.location} onChange={v => fv("location", v)} />
+          </div>
+          <Field label="Description" textarea value={form.description} onChange={v => fv("description", v)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Category" opts={Object.keys(CATS)} value={form.category} onChange={v => fv("category", v)} />
+            <Field label="Price" value={form.price} onChange={v => fv("price", v)} placeholder="e.g. $450/week or Free" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <Field label="Start Date" type="date" value={form.start_date} onChange={v => fv("start_date", v)} />
+            <Field label="End Date" type="date" value={form.end_date} onChange={v => fv("end_date", v)} />
+            <Field label="Reg. Deadline" type="date" value={form.registration_deadline} onChange={v => fv("registration_deadline", v)} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Drop-off Time" value={form.dropoff_time} onChange={v => fv("dropoff_time", v)} placeholder="e.g. 8:30 AM" />
+            <Field label="Pick-up Time" value={form.pickup_time} onChange={v => fv("pickup_time", v)} placeholder="e.g. 3:30 PM" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Min Age" type="number" value={form.age_min} onChange={v => fv("age_min", v)} />
+            <Field label="Max Age" type="number" value={form.age_max} onChange={v => fv("age_max", v)} />
+          </div>
+          <Field label="Requirements / Prerequisites" value={form.requirements} onChange={v => fv("requirements", v)} />
+          <Field label="Website URL" type="url" value={form.website} onChange={v => fv("website", v)} />
+          <Btn ch={<><Ico n="check" size={14} color="white" />Save Changes</>} onClick={submit} disabled={!form.name.trim()} sx={{ justifyContent: "center", marginTop: 4 }} />
+        </div>
+      </div>
+    } />
+  );
+}
+
+function ProgsTab({ progs, family, username, kids, childProgs, onLike, onDelete, onOpen, onAdd, onEdit }) {
   const [filter, setFilter] = useState("All");
   const [sort, setSort] = useState("newest");
   const [q, setQ] = useState("");
@@ -679,12 +729,21 @@ function ProgsTab({ progs, family, username, kids, childProgs, onLike, onDelete,
                 <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: T.muted }}>Added by {p.added_by} · {fmtD(p.created_at)}</span>
                   {p.added_by_family_id === family.id && (
-                    <button onClick={e => { e.stopPropagation(); if (confirm("Delete this program?")) onDelete(p.id); }}
-                      style={{ background: "none", border: "none", color: "#ddd", cursor: "pointer", padding: 4 }}
-                      onMouseEnter={e => e.currentTarget.style.color = T.coral}
-                      onMouseLeave={e => e.currentTarget.style.color = "#ddd"}>
-                      <Ico n="trash" size={14} />
-                    </button>
+                    <div style={{ display: "flex", gap: 2 }}>
+                      <button onClick={e => { e.stopPropagation(); onEdit(p); }}
+                        style={{ background: "none", border: "none", color: "#ddd", cursor: "pointer", padding: 4 }}
+                        title="Edit program"
+                        onMouseEnter={e => e.currentTarget.style.color = T.sky}
+                        onMouseLeave={e => e.currentTarget.style.color = "#ddd"}>
+                        <Ico n="edit" size={14} />
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); if (confirm("Delete this program?")) onDelete(p.id); }}
+                        style={{ background: "none", border: "none", color: "#ddd", cursor: "pointer", padding: 4 }}
+                        onMouseEnter={e => e.currentTarget.style.color = T.coral}
+                        onMouseLeave={e => e.currentTarget.style.color = "#ddd"}>
+                        <Ico n="trash" size={14} />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -878,6 +937,7 @@ export default function App() {
   const [tab, setTab] = useState("programs");
   const [showAdd, setShowAdd] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const username = fam?.name || "";
@@ -920,6 +980,13 @@ export default function App() {
     const patch = { carpool_dropoff: up.carpool_dropoff, carpool_pickup: up.carpool_pickup };
     await DB.updateProgram(up.id, patch);
     setProgs(prev => prev.map(p => p.id === up.id ? { ...p, ...patch } : p));
+  }
+  async function editProgFn(up) {
+    const patch = { name: up.name, organization: up.organization, description: up.description, category: up.category, price: up.price, registration_deadline: up.registration_deadline, start_date: up.start_date, end_date: up.end_date, dropoff_time: up.dropoff_time, pickup_time: up.pickup_time, age_min: up.age_min, age_max: up.age_max, requirements: up.requirements, website: up.website, location: up.location };
+    await DB.updateProgram(up.id, patch);
+    setProgs(prev => prev.map(p => p.id === up.id ? { ...p, ...patch } : p));
+    if (detail?.id === up.id) setDetail(d => ({ ...d, ...patch }));
+    setEditing(null);
   }
   async function sendChat(text) {
     const m = await DB.sendChat({ author: username, family_id: fam.id, text });
@@ -985,7 +1052,7 @@ export default function App() {
           </div>
         ) : (
           <>
-            {tab === "programs" && <ProgsTab progs={progs} family={fam} username={username} kids={kids} childProgs={cps} onLike={likeProg} onDelete={delProg} onOpen={setDetail} onAdd={() => setShowAdd(true)} />}
+            {tab === "programs" && <ProgsTab progs={progs} family={fam} username={username} kids={kids} childProgs={cps} onLike={likeProg} onDelete={delProg} onOpen={setDetail} onAdd={() => setShowAdd(true)} onEdit={setEditing} />}
             {tab === "calendar" && <CalTab progs={progs} onOpen={setDetail} />}
             {tab === "ranked" && <RankedTab progs={progs} onOpen={setDetail} />}
             {tab === "bulletin" && <BulletinTab items={bull} family={fam} username={username} onDelete={delBull} />}
@@ -1002,7 +1069,8 @@ export default function App() {
         </button>
       )}
       {showAdd && <AddProg family={fam} username={username} onClose={() => setShowAdd(false)} onAdd={addProg} />}
-      {detail && <ProgDetail prog={detail} family={fam} username={username} kids={kids} childProgs={cps} onClose={() => setDetail(null)} onSave={saveProg} onAssign={assignKid} />}
+      {detail && <ProgDetail prog={detail} family={fam} username={username} kids={kids} childProgs={cps} onClose={() => setDetail(null)} onSave={saveProg} onAssign={assignKid} onEdit={p => { setDetail(null); setEditing(p); }} />}
+      {editing && <EditProg prog={editing} onClose={() => setEditing(null)} onSave={editProgFn} />}
     </div>
   );
 }
